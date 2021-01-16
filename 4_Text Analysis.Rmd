@@ -1,0 +1,593 @@
+---
+title: "Text Analysis"
+author: "Evian Lin"
+date: "2021/1/7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I do some text analysis in this file. e.g. try to classify the proposals using topics and contents. And thus we can see if the topic related to some specific classification would more likely to reach the threshold, which is, 5000 supports.
+
+```{r}
+library(jsonlite)
+library(tidyverse)
+library(jiebaR)
+library(widyr)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+options(stringsAsFactors = F)
+options(scipen = 999)
+```
+變數說明
+supports:該文章附議數
+positive: 該留言位於贊成立場區
+negative: 該留言位於其他立場區
+agreecount: 該留言讚數
+disagreecount: 該留言倒讚數
+
+
+將數字欄位的NA值取代為0
+```{r}
+completed.df <- readRDS("data/clean/completed_df")
+unsuc.df <- readRDS("data/clean/unsuccessed_df")
+closed.df <- rbind(unsuc.df, completed.df)
+closed.df$supports <- as.numeric(closed.df$supports)
+closed.df$agreeCount <- as.numeric(closed.df$agreeCount)
+
+closed.df <- closed.df %>%
+    mutate_if(is.numeric, ~replace(., is.na(.), 0))
+```
+
+
+將人名和特定名詞放入不會被切分的集合
+```{r}
+cutter <- worker()
+segment_not <- c("蔡英文", "南向政策", "副總統", "大分", "新南向政策", "玉山論壇","柯p","柯P","高雄人","韓國瑜","笑死","柯文哲","陳菊","九二共識","說真的","陳其邁")
+new_user_word(cutter, segment_not)
+stopWords <- readRDS("../R4CSS-master/data/stopWords.rds")
+stopWords <- stopWords %>% 
+    add_row(word = "說") %>%
+    add_row(word = "i")
+```
+#標題分析
+
+從標題看提案大多數內容
+```{r}
+title.df1 <- readRDS("data/title_df/title_df_completed")
+title.df2 <- readRDS("data/title_df/title_df_unsuccessed")
+title.closed <- title.df1 %>%
+    bind_rows(title.df2)
+
+unnest.title <- title.closed %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(titles = str_replace_all(titles, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(titles, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word))
+
+
+title_corr <- unnest.title %>% 
+    filter(!word %in% c("應","請","需")) %>%
+    group_by(word) %>%
+    filter(n() >= 20) %>%
+    ungroup() %>%
+    pairwise_cor(word, titles, sort = T)
+
+title_corr %>%
+    filter(correlation > .2) %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), repel = F, family = "Heiti TC Light") +
+    ggtitle("提案分類") +
+    theme_void()
+    
+
+title_count <- unnest.title %>%
+    filter(!word %in% c("應","請","需")) %>%
+    group_by(word) %>%
+    filter(n() >= 20) %>%
+    ungroup() %>%
+    pairwise_count(word, titles, sort = T)
+
+title_count %>%
+    top_n(120, n) %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+    # geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), repel = F, family = "Heiti TC Light") +
+    ggtitle("熱門議題分類") +
+    theme_void()
+
+unnest.title2 <- title.closed %>%
+    filter(supports>=500) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(titles = str_replace_all(titles, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(titles, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word))
+
+title_corr2 <- unnest.title2 %>%
+    filter(!word %in% c("應","請","需")) %>%
+    group_by(word) %>%
+    filter(n() >= 20) %>%
+    ungroup() %>%
+    pairwise_cor(word, titles, sort = T)
+
+title_corr2 %>%
+    filter(correlation > .1) %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), repel = F, family = "Heiti TC Light") +
+    ggtitle("熱門提案主題") +
+    theme_void()
+    
+```
+其中以correlation畫出來的網絡圖較有代表性，可以看出各種不同的議題
+
+
+全部案件的文字雲與通過案件的文字雲
+```{r}
+cloud <- unnest.title %>%
+    filter(!word %in% c("應","請","需","政府","建議")) %>%
+    count(word, sort = T) %>%
+    top_n(100, n)
+
+wordcloud(cloud$word, cloud$n, min.freq = 1, scale = c(3,.5),
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+cloud.success <- title.df1 %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(titles = str_replace_all(titles, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(titles, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word)) %>%
+    filter(!word %in% c("應","請","需","政府","建議")) %>%
+    count(word, sort = T) %>%
+    top_n(100, n)
+
+wordcloud(cloud.success$word, cloud.success$n,min.freq = 1, scale = c(3,.5),
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+```
+我們可以看出所有提案的文字雲和成功提案的文字雲顯著不同，可能性別、動物、健康等議題比較容易通過提案
+
+
+
+#從title看將議題分類預測成功的機率
+
+先用pca試圖以title將議題分類
+```{r}
+title.dummy <- unnest.title %>%
+    add_count(word) %>%
+    filter(n >= 5) %>%
+    select(-n) %>% #0113
+    distinct(titles, word, .keep_all = T) %>%
+    mutate(dummy = 1) %>%
+    spread(word, dummy, fill = 0)
+
+#title.dummy <- unnest.title %>%
+    # add_count(word) %>%
+    # filter(n >= 5) %>%
+    # count(titles, word) %>%
+    # spread(word, n, fill = 0)
+
+pca.df <- prcomp(title.dummy[-c(1:5)], center = TRUE, scale. = TRUE, rank. = 10)
+saveRDS(pca.df, "data/pca.df_filter10")
+
+plot(pca.df, type = "l")
+
+# pca.df$rotation %>% View
+
+```
+可能用title的token dummy做PCA不太好，因為每篇文章對應的variable太少，可能因為這樣效果不好
+
+
+```{r}
+#PC_score <- readRDS("data/PC_score_title")
+PC_score <- as.matrix(title.dummy[-c(1:5)]) %*% pca.df$rotation[,1:7]
+#這裡其實用pca.df$x就好了
+PC_score <- cbind(title.dummy[c(1:5)], PC_score)
+
+index <- sample(1:nrow(PC_score), ceiling(nrow(PC_score) * .70))
+train.df <- PC_score[index,] %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsuccess")))
+test.df <- PC_score[-index,] %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsuccess")))
+```
+
+#RF
+```{r}
+library(randomForest)
+stime <- Sys.time()
+fit_rf <- randomForest(success ~ ., data = train.df %>% select(-c(1:5)))
+ttime <- Sys.time(); str_c("t(training): ", ttime - stime)
+
+
+predicted <- test.df %>%
+    select(1,13)
+
+predicted$rf <- predict(fit_rf, newdata = test.df %>% select(-c(1:5)) %>% as_tibble(), "class")
+str_c("t(predicting): ", Sys.time() - ttime)
+
+conf.mat <- table(predicted$rf, predicted$success)
+conf.mat
+
+accuracy=sum(diag(conf.mat))/sum(conf.mat)*100
+accuracy
+
+#saveRDS(PC_score, "data/PC_score_title")
+
+```
+RF的Precision並不高，大部分的提案都被預測為unsuccess
+
+#Multinomial Logistic
+```{r}
+library(nnet)
+stime <- Sys.time()
+fit_mnl=multinom(success ~ ., data = train.df %>% select(-c(1:5)),MaxNWts = 5000)
+ttime <- Sys.time(); str_c("t(training): ", ttime - stime)
+predicted$mnl=predict(fit_mnl, newdata = test.df %>% select(-c(1:5)),"class")
+str_c("t(predicting): ", Sys.time() - ttime)
+
+conf.mat.mnl <- table(predicted$mnl, predicted$success)
+conf.mat.mnl
+
+accuracy=sum(diag(conf.mat.mnl))/sum(conf.mat.mnl)*100
+accuracy
+
+# t <- tibble(A,B)
+# A <- c("A","A","B","B")
+# B <- c("A","B","B","B")
+# table(t$A,t$B)
+```
+做完PCA的Multinomial Logistic Regression效果很差，所以我們也無法從係數去判斷哪種提案通過門檻的可能性比較高
+
+
+#情緒字典
+
+本字典是從網路上找到，疑似為大連理工學院編輯的情緒字典，透過excel將簡體字轉為繁體字再行使用
+```{r}
+emotion <- read_csv("data/word emotion.csv")
+
+emotion <- emotion %>%
+    rename(word = 詞語) %>%
+    rename(emotion = 極性) %>%
+    rename(intensity = 強度) %>%
+    mutate(emotion = replace(emotion, emotion == 2, -1)) %>%
+    select(word, emotion, intensity)
+```
+
+
+```{r}
+closed.df.emotion <- closed.df %>%
+    filter(!is.na(oriContent)) %>%
+    mutate(oriContent = str_replace_all(oriContent, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(oriContent, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word)) %>%
+    left_join(emotion, by = "word") 
+    # summarise(NA_count = sum(is.na(emotion)))
+    #大量的NA
+
+
+closed.df.emotion %>%
+    filter(!is.na(emotion)) %>%
+    group_by(titles) %>%
+    mutate(avg_intensity = mean(intensity)) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(success = (supports>5000)*1) %>%
+    ggplot() + aes(avg_intensity, supports) +
+    scale_y_log10() + 
+    geom_point() +
+    geom_smooth(method = "lm") +
+    ggtitle("avg intensity")
+    #留言字眼的情緒強度似乎沒有直接影響
+
+closed.df.emotion %>%
+    mutate(success = (supports>5000)*1) %>%
+    filter(!is.na(emotion)) %>%
+    group_by(titles) %>%
+    mutate(pos_score = sum(emotion==1 * if_else(sideType == "Positive", 1, -1))/n() ,
+           neg_score = sum(emotion==-1 * if_else(sideType == "Positive", 1, -1))/n() ) %>%
+    #用平均情緒分數來看，無論有沒有加後面那項，留言的情緒含量似乎都代表不了什麼
+    ggplot() + aes(pos_score,neg_score, color = log(supports)) +
+    scale_colour_viridis_c(option = "B") +
+    geom_point() +
+    ggtitle("avg pos-score and neg-score")
+
+# closed.df.emotion %>%
+#     mutate(success = (supports>5000)*1) %>%
+#     filter(!is.na(emotion)) %>%
+#     mutate(emotion = emotion * if_else(sideType == "Positive",1,-1)) %>%
+#     group_by(titles) %>%
+#     mutate(pos_score = sum(emotion==1)/n(),
+#            neg_score = sum(emotion==-1)/n()) %>%
+#     #用平均情緒分數來看，無論有沒有加後面那項，留言的情緒含量似乎都代表不了什麼
+#     ggplot() + aes(pos_score,neg_score, color = log(supports)) +
+#     scale_colour_viridis_c(option = "B") +
+#     geom_point() +
+#     ggtitle("avg pos-score and neg-score")
+# 跟上面的結果一樣，代表group_by沒有打亂我的想法
+
+closed.df.emotion %>%
+    mutate(success = (supports>5000)*1) %>%
+    filter(!is.na(emotion)) %>%
+    group_by(titles) %>%
+    mutate(pos_score = sum(emotion==1)/n() ,
+           neg_score = sum(emotion==-1)/n() ) %>%
+    ggplot() + aes(pos_score,neg_score, color = log(supports)) +
+    scale_colour_viridis_c(option = "B") +
+    geom_point() +
+    ggtitle("avg pos-score and neg-score2")
+    
+
+
+```
+第一張圖可以看出光看文字的語言情緒強度沒有很強的解釋力，並不存在留言越偏激越可能通過的情況
+
+
+
+用留言數當作權重看文字雲
+```{r}
+unnest.title.comments <- closed.df %>%
+    mutate(titles = str_replace_all(titles, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(titles, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word))
+
+cloud <- unnest.title.comments %>%
+    filter(!word %in% c("應","請","需","政府","建議")) %>%
+    count(word, sort = T) %>%
+    top_n(100, n)
+
+wordcloud(cloud$word, cloud$n, min.freq = 1, scale = c(3,.5),
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+結果與前面的圖畫出來差不多
+
+#0113patch
+
+以提案的內容重新進行PCA分類
+```{r}
+completed.df <- readRDS("data/clean/completed_df")
+unsuc.df <- readRDS("data/clean/unsuccessed_df")
+
+com.content <- readRDS("data/content/completed_content")
+uns.content <- readRDS("data/content/unsuccessed_content")
+
+
+completed.df <- completed.df %>%
+    left_join(com.content, by = c("links" = "url"))
+unsuc.df <- unsuc.df %>%
+    left_join(uns.content, by = c("links" = "url"))
+    
+# dim(unsuc.df)
+# dim(completed.df)
+
+closed.df <- rbind(unsuc.df, completed.df) %>%
+    relocate(c("content", "impact"), .after = supports) %>%
+    select(-links)
+    
+closed.df$supports <- as.numeric(closed.df$supports)
+closed.df$agreeCount <- as.numeric(closed.df$agreeCount)
+
+closed.df <- closed.df %>%
+    mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+summary(closed.df)
+rm(list = c("unsuc.df","completed.df","uns.content","com.content"))
+
+```
+
+
+```{r}
+cutter <- worker()
+segment_not <- c("蔡英文", "南向政策", "副總統", "大分", "新南向政策", "玉山論壇","柯p","柯P","高雄人","韓國瑜","笑死","柯文哲","陳菊","九二共識","說真的","陳其邁")
+new_user_word(cutter, segment_not)
+stopWords <- readRDS("../R4CSS-master/data/stopWords.rds")
+stopWords <- stopWords %>% 
+    add_row(word = "說") %>%
+    add_row(word = "i")
+```
+
+
+```{r}
+unnest.content <- closed.df %>%
+    distinct(titles, .keep_all = T) %>%
+    #mutate(with = str_detect(content, "[^\\u4E00-\\u9FFF]+")) %>% View
+    mutate(content = str_replace_all(content, "[^\\u4E00-\\u9FFF]+", "")) %>%
+    mutate(word = purrr::map(content, function(x)segment(x, cutter))) %>%
+    unnest(word) %>%
+    filter(!is.na(word)) %>%
+    filter(!(word %in% stopWords$word))
+```
+
+
+如果要用領域分類的話是否應該刪除常用詞?如政府等提案常見詞彙
+```{r}
+content.dummy <- unnest.content %>%
+    select(titles, content, word) %>%
+    add_count(word) %>%
+    filter(n >= 20) %>%
+    select(-n) %>%
+    distinct(titles, word, .keep_all = T) %>%
+    mutate(dummy = 1) %>%
+    spread(word, dummy, fill = 0)
+#Co-occurence matrix
+
+
+t.start <- Sys.time()
+pca.df <- prcomp(content.dummy[,-c(1:2)], center = F, scale. = F, rank. = 10)
+#content.dummy[1,-c(1,2)] %>% sum
+#我認為co-occurence matrix不用scale & center
+t.end <- Sys.time()
+t.end - t.start
+
+plot(pca.df, type = "l")
+saveRDS(pca.df, file = "data/pca.df.content_0113")
+```
+從rotation matrix看來
+
+
+
+```{r}
+PC_score <- cbind(content.dummy[,c(1,2)], pca.df$x) %>%
+    left_join(closed.df[,c(1,3)] %>% distinct(titles, .keep_all = T))
+
+#pca.df$rotation %>% View
+
+index <- sample(1:nrow(PC_score), ceiling(nrow(PC_score) * .70))
+train.df <- PC_score[index,] %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsuccess")))
+test.df <- PC_score[-index,] %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsuccess")))
+```
+PCA分類效果好，從權重我們可以看出各個component分別重視以下詞彙
+PC2: 致癌物、糖尿病、屏東、潮州、鐵路、左營、興建、水質、空氣、癌症
+PC3: 駕駛、交通、道路、罰鍰、致人、罰金、行駛、有期徒刑、肇事、吊銷
+PC4: 左營、潮州、屏東、枋寮、高鐵、支線、通車、電汽化、車站
+PC5: 中央人民政府、致癌物、慢性、世界衛生組織、二手菸、行政長官、吸菸
+PC6: 房、炒房、房地、房貸、薪資、餘額、實價、房地產、稅率、房租
+PC7: 藥事法、獸、飼主、食藥署、狂犬病、配件、收容所
+
+#RF
+```{r}
+library(randomForest)
+stime <- Sys.time()
+fit_rf <- randomForest(success ~ ., data = train.df %>% select(starts_with("PC"), success))
+ttime <- Sys.time(); str_c("t(training): ", ttime - stime)
+
+
+predicted <- test.df %>%
+    select(1,2,14)
+
+predicted$rf <- predict(fit_rf, newdata = test.df %>% select(starts_with("PC")) %>% as_tibble(), "class")
+str_c("t(predicting): ", Sys.time() - ttime)
+
+conf.mat <- table(predicted$rf, predicted$success)
+conf.mat
+
+accuracy=sum(diag(conf.mat))/sum(conf.mat)*100
+accuracy
+
+fit_rf$confusion
+
+#saveRDS(PC_score, "data/PC_score_title")
+
+```
+
+#Multinomial Logistic
+```{r}
+library(nnet)
+stime <- Sys.time()
+fit_mnl=multinom(success ~ ., data = train.df %>% select(starts_with("PC"), success),MaxNWts = 5000)
+ttime <- Sys.time(); str_c("t(training): ", ttime - stime)
+predicted$mnl=predict(fit_mnl, newdata = test.df %>% select(starts_with("PC")),"class")
+str_c("t(predicting): ", Sys.time() - ttime)
+
+conf.mat.mnl <- table(predicted$mnl, predicted$success)
+conf.mat.mnl
+
+train.df %>% View
+accuracy=sum(diag(conf.mat.mnl))/sum(conf.mat.mnl)*100
+accuracy
+
+summary(fit_mnl)
+
+```
+若分類效果好的話我們可以透過各項PC的係數發現哪些提案有比較高的機率通過，然而Logistic Regression的表現並不好
+
+
+```{r}
+PC_score %>%
+    ggplot() + aes(PC3, PC2, color = log(supports)) +
+    geom_point()
+```
+從這張圖看來透過PCA投影的分類並沒有很好的區分出附議數高和低的，有可能單就議題本身並沒有太多的影響力。
+
+Linear Regression to predict supports
+```{r}
+train.df <- train.df %>% mutate(ln_sup = log(supports+1))
+test.df <- test.df %>% mutate(ln_sup = log(supports+1))
+fit_lm <- lm(ln_sup ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 , data = train.df)
+summary(fit_lm)
+
+predict_linear <- test.df %>% select(titles, ln_sup)
+predict_linear$lm <- predict(fit_lm, newdata = test.df %>% select(-c(1,2)))
+
+predict_linear %>%
+    ggplot() + aes(ln_sup, lm) +
+    geom_point()
+```
+PCA on only training set
+```{r}
+index <- sample(1:nrow(content.dummy), ceiling(nrow(content.dummy) * .70))
+
+t.start <- Sys.time()
+PC.training.df <- prcomp(content.dummy[index,-c(1:2)] , rank. = 10)
+t.end <- Sys.time()
+t.end - t.start
+
+
+PC.testing.df <- predict(PC.training.df, newdata = content.dummy[-index,-c(1:2)])
+#PC.testing.df2 <- as.matrix(content.dummy[-index, -c(1:2)]) %*% PC.training.sdf$rotation
+#跟上面的不一樣!?
+train.df <- cbind(content.dummy[index,c(1,2)], PC.training.df$x) %>%
+    left_join(closed.df[,c(1,3)] %>% distinct(titles, .keep_all = T)) %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsucessed")))
+
+test.df <- PC.testing.df %>% as_tibble() %>%
+    bind_cols(content.dummy[-index, c(1,2)]) %>%
+    left_join(closed.df[,c(1,3)] %>% distinct(titles, .keep_all = T)) %>%
+    mutate(success = factor(if_else(supports>=5000, "success", "unsucessed")))
+
+
+
+predicted <- test.df %>%
+    select(titles, success)
+
+fit_rf <- randomForest(success ~ ., data = train.df %>% select(starts_with("PC"), success))
+
+predicted$rf <- predict(fit_rf, newdata = PC.testing.df %>% as_tibble(), "class")
+str_c("t(predicting): ", Sys.time() - ttime)
+
+conf.mat <- table(predicted$rf, predicted$success)
+conf.mat
+
+accuracy=sum(diag(conf.mat))/sum(conf.mat)*100
+accuracy
+
+fit_rf$confusion
+
+```
+
+#Conclusion
+我們可以看到rf在training set的分類已經沒有做得很好，所以testing set失敗也在意料之中。在加入文章內容的case中，我們可以看到PCA確實做出比較好的分類，但是預測效果仍然沒有變好，觀察兩次confusion matrix，我們可以發現testing set的資料大部分都被分類在unsuccess class中。以Random Forest Classification的特性而言，應不至於受到極端值影響。若是success資料在10維Principle Component空間中有明顯群聚(以這個研究而言文字特性、文章分類接近)，unbalanced data也應不會有太大影響。也就是說10維的PC空間中，我們並沒有辦法得到某個subset很純的只有success data，換句話說，沒有特定的討論內容是但凡討論到相關主題會極大幅度增加成功機率。或許我們以Regression Problem處理時，議題的分類可以影響附議數但是幅度沒有大到會直接影響是否通過提案。
+
+本研究初步探勘了公共政策網路參與平台的資料，並試圖以立場、讚數、聲量、情緒、時間、文字等四大面向分析群眾在乎的議題並研究以上變數對附議數的影響。結合以上分析，我認為真正決定一篇文章是否會通過提案主要還是曝光度，曝光度可能driven by KOL的分享或是政黨網軍的操作，而曝光度會drive聲量、留言等。本資料有趣的點在於他只能看到附議數不能看到反對數，也就是不論總瀏覽人數的支持比例為何，附議數僅會反應總瀏覽人之中的支持人數。這或許也是為什麼留言的立場分析對附議數的效果有限。
+
+
+
+
+
+
+
+
+

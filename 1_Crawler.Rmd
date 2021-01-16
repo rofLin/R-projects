@@ -1,0 +1,455 @@
+---
+title: 'Crawler: Public Opinion Platform'
+author: "Evian Lin"
+date: "2020/01/15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+Public Opinion Platform公共政策網路參與平台https://join.gov.tw/
+
+```{r}
+library(tidyverse)
+library(jsonlite)
+library(rvest)
+library(httr)
+```
+
+
+```{r}
+url <- "https://join.gov.tw/idea/index/search/ENDORSING?page=1"
+
+doc <- read_html(url)
+class(doc)
+
+nodes_date <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.r_fleft > li")
+dates <- html_text(nodes_date)
+
+nodes_title <- html_nodes(doc, "#searchResult > div > div > span > a")
+titles <- html_text(nodes_title)
+
+links <- html_attr(nodes_title, name = "href")
+pre_link <- "https://join.gov.tw"
+links <- str_c(pre_link,links)
+
+nodes_support <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.tool.r_fright > li.show_4 ")
+supports <- html_text(nodes_support)
+supports <- supports %>% str_extract("\\d")
+
+df <- tibble(titles, dates, supports, links)
+```
+
+
+#title_df 附議中Endorsing
+```{r}
+
+title_df <- tibble()
+
+for (p in 1:14) {
+    
+url <- str_c("https://join.gov.tw/idea/index/search/ENDORSING?page=",p)
+
+doc <- read_html(url)
+class(doc)
+
+nodes_date <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.r_fleft > li")
+dates <- html_text(nodes_date)
+
+nodes_title <- html_nodes(doc, "#searchResult > div > div > span > a")
+titles <- html_text(nodes_title)
+
+links <- html_attr(nodes_title, name = "href")
+pre_link <- "https://join.gov.tw"
+links <- str_c(pre_link,links)
+
+nodes_support <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.tool.r_fright > li.show_4 ")
+supports <- html_text(nodes_support)
+supports <- supports %>% str_extract("\\d")
+
+df <- tibble(titles, dates, supports, links)
+title_df <- bind_rows(title_df, df)
+
+print(p)
+}
+
+saveRDS(title_df, file="../Final Project/data/title_df/endorsing/title_df_endorsing_1223s")
+```
+
+#title_df 已成案Completed
+Completed的dates是附議通過的日期而非提案的日期，所以下一個cell(0107)重新處理
+```{r}
+title_df <- tibble()
+for (p in 1:12) {
+url <- str_c("https://join.gov.tw/idea/index/search/COMPLETED?page=",p)
+
+doc <- read_html(url)
+class(doc)
+
+nodes_date <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.r_fleft > li")
+dates <- html_text(nodes_date)
+
+nodes_title <- html_nodes(doc, "#searchResult > div > div > span > a")
+titles <- html_text(nodes_title)
+
+links <- html_attr(nodes_title, name = "href")
+pre_link <- "https://join.gov.tw"
+links <- str_c(pre_link,links)
+
+nodes_support <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.tool.r_fright > li.show_2 > span")
+
+supports <- html_text(nodes_support)
+
+df <- tibble(titles, dates, supports, links)
+title_df <- bind_rows(title_df, df)
+
+print(p)
+}
+
+saveRDS(title_df, file="../Final Project/data/title_df_completed")
+```
+
+#01/07
+調整completed data的日期
+```{r}
+title_df <- readRDS("data/title_df/title_df_completed")
+url <- (title_df$links[1])
+doc <- read_html(url)
+html_nodes(doc, "body > div:nth-child(23) > ul > li:nth-child(1) > div > div.process_style > div > p:nth-child(1)") %>% html_text %>% trimws()
+
+#Loops
+completed.date.df <- tibble()
+for (i in 1:nrow(title_df)) {
+    url <- title_df$links[i]
+    date <- read_html(url) %>% html_nodes("body > div:nth-child(23) > ul > li:nth-child(1) > div > div.process_style > div > p:nth-child(1)") %>% html_text %>% trimws()
+    completed.date.df <- completed.date.df %>% bind_rows(tibble(url,date))
+    print(i)
+}
+
+#取代原本的
+title_df <- title_df %>% 
+    select(-dates) %>% 
+    left_join(completed.date.df, by = c("links" = "url")) %>%
+    rename(dates = date) %>%
+    relocate(dates, .after = titles)
+
+saveRDS(title_df, file = "data/title_df/title_df_completed")
+
+```
+
+#未成案 Unsuccessed
+```{r}
+title_df <- tibble()
+
+for (p in 1:91) {
+url <- str_c("https://join.gov.tw/idea/index/search/ABNORMAL?size=100&page=",p)
+
+doc <- read_html(url)
+
+nodes_date <- html_nodes(doc, "ul.ul.lileft.clearfix.fleft > li")
+dates <- html_text(nodes_date)
+
+nodes_title <- html_nodes(doc, "#searchResult > div > div > span > a")
+titles <- html_text(nodes_title)
+
+links <- html_attr(nodes_title, name = "href")
+pre_link <- "https://join.gov.tw"
+links <- str_c(pre_link,links)
+
+nodes_support <- html_nodes(doc, "#searchResult > div > div > div > ul.ul.lileft.clearfix.tool.r_fright ")
+supports <- html_text(nodes_support)
+supports <- supports %>% str_extract('(\\d*)(?=人)')
+supports[is.na(supports)] <- 0
+
+df <- tibble(titles, dates, supports, links)
+
+title_df <- bind_rows(title_df,df)
+
+print(p)
+}
+
+saveRDS(title_df, file = "data/title_df_unsuccessed")
+
+```
+
+#Comments_testing
+```{r}
+url <- title_df$links[21]
+url
+browseURL(url)
+
+"https://join.gov.tw/joinCommentsDebate/board/idea/b0dec804-32e5-4ac0-b015-6f8544613fe1/Positive?page=2&size=10&sort=4&ct=1608555294564"
+
+comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Positive")
+
+comments_url <- "https://join.gov.tw/joinCommentsDebate/board/idea/b0dec804-32e5-4ac0-b015-6f8544613fe1/Positive"
+
+
+response <- GET(comments_url)
+#, config = add_headers("page" = 1, "size" = 10, "sort" = 4, "ct" = 1608555294564))
+browseURL(url)
+res <- content(response, "text") %>% fromJSON()
+res$totalPages
+res$result %>% View
+
+url
+
+last_p <- res$totalPages
+comments_df <- tibble()
+for (p in 1:last_p) {
+url <- str_c(comments_url, "?page=", p)
+# res <- GET(comments_url, config = add_headers("page" = p, "Referer" = "https://join.gov.tw/styles/propose.css?v=1.1&t=72417758", "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")) %>% content("text") %>% fromJSON()
+res <- GET(url) %>% content("text") %>% fromJSON()
+df <- res$result
+comments_df <- comments_df %>% bind_rows(df)
+}
+```
+
+
+#Endorsing_Positive_comments_loops
+```{r}
+title_df <- readRDS("data/title_df/endorsing/title_df_endorsing_1222")
+all_comments_df <- tibble()
+for (i in 1:nrow(title_df)) {
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Positive")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/266")
+}
+
+saveRDS(all_comments_df, file = "data/endorsing_comments")
+```
+
+#Unsuccessed_Positive_comments_loops
+```{r}
+title_df <- readRDS("../Final Project/data/title_df_unsuccessed")
+all_comments_df <- tibble()
+
+start.time <- Sys.time()
+
+for (i in 4087:nrow(title_df)) {
+    
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Positive")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+    
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/9071")
+}
+
+saveRDS(all_comments_df, file = "data/unsuccessed_comments")
+
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+
+saveRDS(all_comments_df, file = "data/unsuccessed_comments1_from_4087")
+```
+#Completed_Positive_comments_loops
+```{r}
+title_df <- readRDS("../Final Project/data/title_df/title_df_completed")
+all_comments_df <- tibble()
+for (i in 1:nrow(title_df)) {
+    
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Positive")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/228")
+}
+
+saveRDS(all_comments_df, file = "data/positive_comments/completed_positive_comments")
+```
+
+
+#Endorsing_Negative_comments_loops
+```{r}
+rm(list = ls())
+title_df <- readRDS("data/title_df/endorsing/title_df_endorsing_1222")
+all_comments_df <- tibble()
+for (i in 1:nrow(title_df)) {
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Negative")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/266")
+}
+
+saveRDS(all_comments_df, file = "data/negative_comments/endorsing_negative_comments")
+```
+
+#Unsuccessed_Negative_comments_loops
+```{r}
+rm(list = ls())
+title_df <- readRDS("../Final Project/data/title_df/title_df_unsuccessed")
+all_comments_df <- tibble()
+
+start.time <- Sys.time()
+
+for (i in 1:nrow(title_df)) {
+    
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Negative")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+    
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/9071")
+}
+
+saveRDS(all_comments_df, file = "data/negative_comments/unsuccessed_negative_comments")
+
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
+
+#Completed_Negative_comments_loops
+```{r}
+rm(list = ls())
+title_df <- readRDS("../Final Project/data/title_df/title_df_completed")
+all_comments_df <- tibble()
+
+start.time <- Sys.time()
+
+for (i in 1:nrow(title_df)) {
+    
+    url <- title_df$links[i]
+    comments_url <- str_c("https://join.gov.tw/joinCommentsDebate/board/idea/", str_extract(url, "[^\\/]+$"), "/Negative")
+    res <- GET(comments_url) %>% content("text") %>% fromJSON()
+    last_page <- res$totalPages
+    comment_df <- tibble()
+    for (p in 1:last_page) {
+    page_url <- str_c(comments_url, "?page=", p)
+    res <- GET(page_url) %>% content("text") %>% fromJSON()
+    df <- res$result
+    comment_df <- comment_df %>% bind_rows(df)
+    }
+all_comments_df <- all_comments_df %>% bind_rows(comment_df)
+message(i,"/228")
+}
+
+saveRDS(all_comments_df, file = "data/negative_comments/completed_negative_comments")
+
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
+
+
+#patch0112
+爬取個提案文字並細分為提議內容(content)和利益與影響(impact)
+```{r}
+#Completed
+title.df.completed<- readRDS("data/title_df/title_df_completed")
+
+url <- (title.df.completed$links[2])
+browseURL(url)
+doc <- read_html(url)
+html_nodes(doc, "body > div:nth-child(24) > div.editor.marb_30.clearLineHeight") %>% 
+    html_text() %>%
+    str_replace_all("\\r", "") %>%
+    str_replace_all("\\n", "") %>%
+    str_replace_all("\\t", "")
+
+
+#Loops
+unsuccessed.content.df <- tibble()
+for (i in 1:nrow(title.df.completed)) {
+    url <- title.df.completed$links[i]
+    content <- read_html(url) %>% 
+        html_nodes("body > div:nth-child(24) > div.editor.marb_30.clearLineHeight") %>% 
+        html_text() %>%
+        str_replace_all("\\r", "") %>%
+        str_replace_all("\\n", "") %>%
+        str_replace_all("\\t", "")
+        completed.content.df <- completed.content.df %>% bind_rows(tibble(url,content))
+    if (i%%10==0) {print(i)}
+}
+
+completed.content.df <- completed.content.df %>%
+    separate("content", c("content","impact"), sep = "利益與影響") %>%
+    mutate(test = str_detect(content, "利益與影響")) %>%
+    mutate(content = str_replace(content, "提議內容或建議事項", ""))
+
+saveRDS(completed.content.df, file = "data/content/completed_content")
+
+#Unsuccessed
+title.df.unsuccessed<- readRDS("data/title_df/title_df_unsuccessed")
+
+url <- (title.df.unsuccessed$links[2])
+browseURL(url)
+doc <- read_html(url)
+html_nodes(doc, "body > div:nth-child(24) > div.editor.marb_30.clearLineHeight") %>% 
+    html_text() %>%
+    str_replace_all("\\r", "") %>%
+    str_replace_all("\\n", "") %>%
+    str_replace_all("\\t", "")
+
+
+#Loops
+unsuccessed.content.df <- tibble()
+for (i in 3568:nrow(title.df.unsuccessed)) {
+    url <- title.df.unsuccessed$links[i]
+    content <- read_html(url) %>% 
+        html_nodes("body > div:nth-child(24) > div.editor.marb_30.clearLineHeight") %>% 
+        html_text() %>%
+        str_replace_all("\\r", "") %>%
+        str_replace_all("\\n", "") %>%
+        str_replace_all("\\t", "")
+        unsuccessed.content.df <- unsuccessed.content.df %>% bind_rows(tibble(url,content))
+    if (i%%100==0) {print(i)}
+    Sys.sleep(0.1)
+}
+
+unsuccessed.content.df <- unsuccessed.content.df %>%
+    separate("content", c("content","impact"), sep = "利益與影響") %>%
+    mutate(test = str_detect(content, "利益與影響")) %>%
+    mutate(content = str_replace(content, "提議內容或建議事項", ""))
+
+saveRDS(unsuccessed.content.df, file = "data/content/unsuccessed_content")
+```
+
+
+
