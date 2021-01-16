@@ -1,0 +1,314 @@
+---
+title: "Basic Analysis with Numeric Regressor"
+author: "Evian Lin"
+date: "2020/12/29"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This file want to glimpse the data and analyze the explanatory power of the comments and time trend, i.e, how many information about number of peoples supported the proposals can we get from these things.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+只考慮已經結案(成案60天後已達到或未達到附議門檻)，避免附議中提案導致偏誤
+```{r}
+completed.df <- readRDS("data/clean/completed_df")
+
+str(completed.df)
+
+completed.df$supports <- as.numeric(completed.df$supports)
+completed.df$agreeCount <- as.numeric(completed.df$agreeCount)
+```
+
+將成功與未成功提案合併成closed.df
+```{r}
+unsuc.df <- readRDS("data/clean/unsuccessed_df")
+
+closed.df <- rbind(unsuc.df, completed.df)
+closed.df$supports <- as.numeric(closed.df$supports)
+closed.df$agreeCount <- as.numeric(closed.df$agreeCount)
+
+closed.df <- closed.df %>%
+    mutate_if(is.numeric, ~replace(., is.na(.), 0))
+    #replace NA to 0
+
+closed.df %>%
+    mutate(agreeCount = as.numeric(agreeCount)) %>%
+    ggplot() + aes(agreeCount+1) +
+    geom_histogram() +
+    scale_x_log10()
+
+#cdate = NA -> 沒有留言
+names(closed.df)
+
+```
+
+Basic Visualization about Positive and Negative Voices
+```{r}
+closed.df %>%
+    filter(!is.na(sideType)) %>%
+    filter(sideType == "Positive") %>%
+    group_by(titles) %>%
+    add_count() %>%
+    ungroup() %>%
+    mutate(n = n+1) %>%
+    mutate(supports = supports+1) %>%
+    #avoid -inf
+    distinct(titles, .keep_all = T) %>%
+    ggplot() + aes(n, supports) +
+    xlab("Positive Comments") +
+    scale_x_log10() +
+    scale_y_log10() +
+    geom_point() +
+    geom_smooth(method = "lm")
+
+closed.df %>%
+    filter(!is.na(sideType)) %>%
+    filter(sideType == "Negative") %>%
+    group_by(titles) %>%
+    add_count() %>%
+    ungroup() %>%
+    mutate(n = n+1) %>%
+    mutate(supports = supports+1) %>%
+    #avoid -inf
+    distinct(titles, .keep_all = T) %>%
+    ggplot() + aes(n, supports) +
+    xlab("Negative Comments") +
+    scale_x_log10() +
+    scale_y_log10() +
+    geom_point() +
+    geom_smooth(method = "lm")
+
+closed.df %>%
+    drop_na(sideType) %>%
+    #這邊討論留言正負，所以先把沒有留言的drop掉
+    group_by(titles,sideType) %>%
+    add_count() %>%
+    ungroup() %>%
+    distinct(titles, sideType, .keep_all = T) %>%
+    select(titles,supports, sideType, n) %>%
+    spread(key = sideType, value = n) %>%
+    mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>%
+    mutate(Positive = Positive+1,
+           Negative = Negative+1) %>%
+    #方便log_scale
+    ggplot() + aes(Positive, Negative) +
+    scale_x_log10() +
+    scale_y_log10() +
+    geom_point(aes(color = log(supports)), size = 3) +
+    scale_colour_viridis_c(option = "B") +
+    geom_abline()
+
+#Can try positive/negative or positive-nagitive
+
+```
+這張圖中我們可以看到給定贊成留言增加反對留言數量會增加附議數，反之亦然。然而附議數較高的提案通常還是正面留言數多於負面留言。
+
+
+```{r}
+closed.df %>% 
+    count(titles) %>%
+    ggplot() + aes(n) +
+    geom_histogram() +
+    scale_y_log10()
+
+closed.df %>%
+    ggplot() + aes(agreeCount) +
+    geom_histogram() +
+    scale_y_log10()
+
+```
+這裡也發現有些如"廢除不公平的教召制度"檢核沒有通過卻沒刪掉
+
+
+用留言的(讚數+1/倒讚+1)乘以(讚數+倒讚)當作建立argue point做為指標，Negative留言則為乘以(-1)
+這個指標可以衡量讚數的比例也考量該留言的曝光度(總聲量)
+```{r}
+closed.df2 <- closed.df %>%
+    filter(!is.na(oriContent)) %>%
+    #這邊只論comments故把沒有comments的先filter掉
+    mutate(agreeCount = agreeCount+1,
+           disagreeCount = disagreeCount+1) %>% #to avoid inf
+    mutate(agr_dis_ratio = round(agreeCount/disagreeCount,digits = 3)) %>% #agree/disagree當作該則留言的ratio
+    mutate(arguepoint = if_else(sideType == "Positive", agr_dis_ratio*(agreeCount+disagreeCount-2), -agr_dis_ratio*(agreeCount+disagreeCount-2))) %>%
+    #這個計算方法下正評增加一的漲幅會相當於直接相減，但是會更重視按讚和倒讚總和(視為該留言影響力)
+    #arguepoint為正可能為positive受支持或是negative被反對\
+    group_by(titles) %>%
+    mutate(sum_argue = sum(arguepoint)) %>%
+    ungroup() %>%
+    mutate(log_supports = log(supports+1)) %>%
+    mutate(argue_sign = case_when(sum_argue>0 ~1, sum_argue ==0 ~0, sum_argue<0 ~(-1))) %>%
+    mutate(log_sum_argue = if_else(argue_sign==0, 0,log(abs(sum_argue))*argue_sign))
+    #我保留sum_argue的正負號後對其絕對值取log，0的部分則直接為0
+closed.df2 %>% distinct(titles, .keep_all = T) %>%
+    ggplot() + aes(log_sum_argue, log_supports) +
+    geom_point() +
+    geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+```
+可以發現就算我們把支持與反對的留言依文章加總，贊成立場的評論數對附議數仍然沒有
+
+
+```{r}
+closed.df2$log_sum_argue2 <- closed.df2$log_sum_argue^2
+Reg <- lm(log_supports ~ log_sum_argue + log_sum_argue2, data = closed.df2)
+summary(Reg)
+```
+正負評似乎影響不大，能拿來預測的似乎只有這則貼文的討論度
+
+
+
+```{r}
+closed.df %>% 
+    mutate(success = 1*(supports>=5000)) %>%
+    mutate(supports = supports+1) %>%
+    group_by(titles) %>%
+    mutate(Voice = log(sum(agreeCount) + sum(disagreeCount)+1)) %>%
+    #把所有留言(無論好壞)的讚和倒讚加起來
+    #好像可以用add_count(titles)
+    ungroup() %>%
+    distinct(titles, .keep_all = T) %>%
+    ggplot() + aes(Voice, supports, color = success) +
+    scale_y_log10() +
+    geom_point() +
+    geom_smooth(method = "lm", formula = y ~ poly(x,2))
+```
+
+
+
+#Closed Cases - Time Trend
+```{r}
+closed.df$dates <- as.POSIXct(closed.df$dates)
+closed.df$cdate <- as.POSIXct(closed.df$cdate, tz = "Asia/Taipei")
+closed.df$cdate <- closed.df$cdate + hours(8)
+#發現時間差8個小時，可能是處理時區沒處理好
+
+
+trend <- lm(closed.df$supports ~ closed.df$dates)
+summary(trend)
+
+plot(closed.df$dates, closed.df$supports)
+abline(reg = trend, col = 'blue')
+
+```
+我們可以從圖中判斷此資料分配沒有違反Stationary Hypothesis
+
+```{r}
+closed.df %>%
+    distinct(titles, .keep_all=T) %>%
+    mutate(wday = weekdays(dates)) %>%
+    mutate(success = if_else(supports>=5000,"success","unsuccess")) %>%
+    add_count(wday) %>%
+    ggplot() + aes(wday, fill = success) %>%
+    geom_bar()
+    
+```
+這份資料並沒有明顯的受到星期幾影響
+
+
+接著我想看特定時間段內的留言次數(supports的IV可不可以對於這個議題有很好的預測)
+```{r}
+closed.df$dates <- as.POSIXct(closed.df$dates)
+closed.df$cdate <- as.POSIXct(closed.df$cdate, tz = "Asia/Taipei")
+closed.df$cdate <- closed.df$cdate + hours(8)
+closed.with_comments <- closed.df[!is.na(closed.df$cdate),]
+closed.with_comments <- closed.with_comments %>% 
+    mutate(time_diff = floor(difftime(cdate, dates, unit = "days")))
+    # distinct(titles, .keep_all = T) %>%
+    # count(time_diff > 0) %>% 
+    #處理完completed.df後仍然有23篇文章的留言時間為負
+closed.with_comments %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<=60) %>%
+    #filter掉時間為負的留言，然後先關注60天內的留言，因為附議階段只有60分鐘
+    ggplot() + aes(time_diff) +
+    geom_bar()
+    # + xlim(0,60)
+
+
+closed.with_comments %>%
+    add_count(titles) %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<=60) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(supports = supports + 1) %>%
+    ggplot() + aes(x = n, y = supports) +
+    scale_x_log10() +
+    scale_y_log10() +
+    geom_point() + 
+    geom_smooth(method = "lm")
+    
+
+for (d in c(1,3,7,10,30)){
+    reg <- closed.with_comments %>%
+    add_count(titles) %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<= d) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(supports = supports + 1) %>%
+    lm(data = ., log(supports) ~ log(n)) 
+    message("in ",d,"days: R2 of log scale = ",summary(reg)$r.squared)
+    # summary(reg)$adj.r.squared
+
+    reg2 <- closed.with_comments %>%
+    add_count(titles) %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<= d) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(supports = supports + 1) %>%
+    lm(data = ., supports ~ n) 
+    message("in ",d,"days: R2 = ",summary(reg2)$r.squared)
+    # summary(reg)$adj.r.squared
+}
+
+# browseURL(test$links[6])
+```
+不取log的話R2會越來越高，取log的話R2會越來越低。
+因為考慮的天數越多scale越大，不取log的回歸會更重視scale比較大的資料。
+在取log的模型下一天內的回應數預測效果是最好的。
+
+
+```{r}
+closed.with_comments %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<= 1) %>%
+    group_by(titles) %>%
+    add_count() %>%
+    rename(comments_in_1day = n) %>%
+    ungroup() %>%
+    mutate(supports = supports+1) %>%
+    distinct(titles, .keep_all = T) %>%
+    ggplot() + aes(comments_in_1day, supports)+
+    scale_x_log10() + 
+    scale_y_log10() +
+    geom_point() + 
+    geom_smooth(method = "lm")
+    #其實不確定這樣的lm是fit y~x還是log(y) ~log(x)
+
+reg <- closed.with_comments %>%
+    add_count(titles) %>%
+    filter(time_diff>0) %>%
+    filter(time_diff<=1) %>%
+    distinct(titles, .keep_all = T) %>%
+    mutate(supports = supports + 1) %>%
+    lm(data = ., log(supports) ~ log(n)) 
+
+reg$coefficients
+
+# (log(5001) -2.134119)/1.059550 = 1.476983
+# e^1.476983 = 4.379712
+```
+預測結果為:第一天超過4則留言(曝光度或討論度高)，則預測該提案會通過5000的附議門檻
+
+
+
+
+
+
+
+
