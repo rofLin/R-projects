@@ -1,20 +1,10 @@
-In this project, I use crawler to get topics, text contents, and other features from public opinion website.
-I tried to explore how comments count and emotional words affect the final support count after 3 months.
+In this project, I used a web crawler to extract topics, textual content, and other features from a public opinion website. My aim was to investigate how the comment count and emotional language impact the final support count after a period of 3 months.
 
-I found that both positive and negative comment counts are linear correlated with final support count.
-It is reasonable that these two factors are both driven by popularity. How many people care about the topics?
+I found a linear correlation between both positive and negative comment counts and the final support count. It is reasonable to assume that popularity drives these factors, which are influenced by how many people are interested in the topic.
 
-I tried manys way to measure emotional words, and tried to use them to predict whether the articles would get enough support counts to cross the threshold or not.
-However, they did not work well.
-On the other hands, the popularity (agree or disagree count) in the first day do a better job on it.
+I attempted to measure emotional language using various methods, and use it to predict whether articles would receive enough support to cross the threshold. However, the results were unsatisfactory. On the other hand, the popularity of the article (i.e. agree or disagree count) on the first day proved to be a better predictor.
 
-Also, I tried to classify these articles to different field through text contents.
-With text clusturing and word cloud, we can take a glimpse of those different fields.
-There are some most popular topics on the website.
+I also attempted to classify the articles into different fields based on the textual content. Through text clustering and word clouds, we gained insight into the most popular topics on the website.
 
-I also tried to use PCA to classify topics to coarser fields, 
-hope to find the issue which is easier to be supported.
-But it does not work well, too. 
-I can only interpret that PC4 is clearly about traffic issues.
-
+I further attempted to use PCA to classify topics into broader fields, hoping to identify those that were more likely to receive support. However, the results were not significant, and the only conclusion I could draw was that PC4 was related to traffic issues.
 
